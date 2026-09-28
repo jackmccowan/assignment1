@@ -35,7 +35,15 @@ ctest --test-dir build-debug --output-on-failure
 
 GCC/Clang use ASan and UBSan. MSVC only supports ASan.
 
-**Windows (MSVC):** run these commands from a *Developer PowerShell for VS 2022* (Start menu), which puts `cl`, `cmake`, and `ninja` on PATH. Add `-G Ninja` to the configure commands for single-config builds. MSVC ignores `-march=native`; its Release flags are `/O2`.
+**Windows (MSVC):** first put the **64-bit** VS 2022 toolchain on PATH. The Start-menu
+"Developer PowerShell" defaults to 32-bit, which fails to link (LNK4272, x86 vs x64):
+
+```powershell
+& "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64
+```
+
+Then add `-G Ninja` to the configure commands. If a configure has already failed, delete the build
+folder and reconfigure: CMake caches the compiler path. MSVC ignores `-march=native`; its Release flags are `/O2`.
 If you use a multi-config generator (Visual Studio), add `--config Debug` to the build and ctest commands.
 
 ## Benchmark (Release: `-O2 -march=native`)
@@ -47,7 +55,7 @@ cmake --build build-release
 python scripts/plot.py
 ```
 
-Options: `--reps`, `--min-log`/`--max-log` (n goes from 2^min to 2^max), `--quadratic-max-log`
+Options: `--counts-out results/counts.csv` (extra untimed run collecting path length and write counts), `--reps`, `--min-log`/`--max-log` (n goes from 2^min to 2^max), `--quadratic-max-log`
 (cap on n for quick-find and naive-no-compression, which can be quadratic), `--seed`.
 
 Methodology notes:
