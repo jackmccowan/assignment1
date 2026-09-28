@@ -1,0 +1,14 @@
+build*/
+out/
+.vs/
+.vscode/
+__pycache__/
+*.pyc
+CMakeUserPresets.json
+.claude/settings.local.json
+report
+ai_log.md
+claude.md
+spec.md
+plan.md
+assignment.md
