@@ -28,6 +28,9 @@ target_include_directories(uf INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 add_executable(tests tests/test_union_find.cpp)
 target_link_libraries(tests PRIVATE uf)
 
+add_executable(test_maze tests/test_maze.cpp)
+target_link_libraries(test_maze PRIVATE uf)
+
 add_executable(bench bench/bench_main.cpp)
 target_link_libraries(bench PRIVATE uf)
 
@@ -36,3 +39,4 @@ target_link_libraries(demo PRIVATE uf)
 
 enable_testing()
 add_test(NAME union_find_tests COMMAND tests)
+add_test(NAME maze_tests COMMAND test_maze)

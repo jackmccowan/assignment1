@@ -1,5 +1,4 @@
 // Correctness tests for every variant in uf/variants.hpp.
-// No external framework: CHECK records failures, main returns non-zero if any.
 
 #include <cmath>
 #include <cstdint>
@@ -8,19 +7,8 @@
 #include <random>
 #include <vector>
 
+#include "check.hpp"
 #include "uf/variants.hpp"
-
-static int g_failures = 0;
-static const char* g_variant = "";
-
-#define CHECK(cond)                                                              \
-    do {                                                                         \
-        if (!(cond)) {                                                           \
-            std::fprintf(stderr, "[%s] %s:%d: CHECK failed: %s\n", g_variant,    \
-                         __FILE__, __LINE__, #cond);                             \
-            ++g_failures;                                                        \
-        }                                                                        \
-    } while (0)
 
 using index_t = std::uint32_t;
 
