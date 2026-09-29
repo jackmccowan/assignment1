@@ -73,8 +73,17 @@ cmake --build build-release
 python scripts/plot.py
 ```
 
-Options: `--counts-out results/counts.csv` (extra untimed run collecting path length and write counts), `--reps`, `--min-log`/`--max-log` (n goes from 2^min to 2^max), `--quadratic-max-log`
-(cap on n for quick-find and naive-no-compression, which can be quadratic), `--seed`.
+Options:
+
+| Option | Meaning |
+|---|---|
+| `--counts-out FILE` | Extra untimed run per case, collecting path length and write counts |
+| `--reps K` | Samples per point (default 5) |
+| `--min-log A`, `--max-log B` | n goes from 2^A to 2^B |
+| `--quadratic-max-log C` | Cap on n for quick-find and naive-no-compression, which can be quadratic (default 14) |
+| `--seed S` | Seed for the generated workloads |
+| `--min-time-ms T` | Each sample repeats the run until its timed total is at least T ms (default 5) |
+| `--cpu N` / `--no-pin` | Pin to CPU N / don't pin. By default, Windows picks a P-core automatically. |
 
 Workloads (`n` = number of elements, a power of two):
 
@@ -87,6 +96,10 @@ Workloads (`n` = number of elements, a power of two):
 
 Methodology notes:
 - Operation sequences and the union-find object are built before the timer starts. Only the operation loop is timed.
+- Noise control: the benchmark is pinned to one CPU at raised priority, each variant gets a discarded
+  warm-up run, and each sample sums `inner` runs (a CSV column) so that it lasts at least
+  `--min-time-ms`. This took the median run-to-run spread (IQR / median, 5 reps, n = 2^10 to 2^12)
+  from 16% to 1%. `plot.py` draws the IQR as error bars and writes it to `report/figures/spread.csv`.
 - Each variant produces an order-sensitive checksum of its answers. If two variants disagree, the run aborts.
 - `std::shuffle` and the `<random>` distributions are implementation-defined, so a given `--seed`
   produces the same operations on the same compiler, but not across MSVC, GCC and Clang.

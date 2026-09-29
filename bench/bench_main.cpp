@@ -11,9 +11,19 @@
 //    as its counting twin (UnionFind<L, P, true>), and the counters go to a
 //    separate CSV. Its checksum must match the timed run's.
 //
+// Noise control:
+//  * The process is pinned to one CPU (a P-core on hybrid Windows machines)
+//    at raised priority; see platform.hpp.
+//  * Each variant gets one discarded warm-up run, which also calibrates how
+//    many runs ("inner") one sample needs to last at least --min-time-ms.
+//  * A sample = `inner` runs; each run constructs a fresh object untimed and
+//    times only apply_ops, and the timed parts are summed. So short runs at
+//    small n are no longer dominated by timer granularity and OS interruptions.
+//
 // Usage: bench [--out results/bench.csv] [--counts-out results/counts.csv]
 //              [--reps 5] [--min-log 10] [--max-log 20]
 //              [--quadratic-max-log 14] [--seed 12345]
+//              [--min-time-ms 5] [--cpu N | --no-pin]
 
 #include <algorithm>
 #include <chrono>
@@ -29,6 +39,7 @@
 #include <utility>
 #include <vector>
 
+#include "platform.hpp"
 #include "uf/maze.hpp"
 #include "uf/variants.hpp"
 
@@ -153,6 +164,34 @@ static Measurement run_once(std::size_t n, const std::vector<Op>& ops) {
     return {std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count(), checksum};
 }
 
+// One sample: `inner` runs back to back, each with a fresh object built
+// untimed, summing only the timed parts. Every run applies the same ops, so
+// every run must produce the same checksum.
+template <class UF>
+static Measurement run_sample(std::size_t n, const std::vector<Op>& ops, int inner) {
+    Measurement total{0, 0};
+    for (int i = 0; i < inner; ++i) {
+        const Measurement m = run_once<UF>(n, ops);
+        if (i > 0 && m.checksum != total.checksum) {
+            std::fprintf(stderr, "checksum changed between identical runs\n");
+            std::exit(1);
+        }
+        total.ns += m.ns;
+        total.checksum = m.checksum;
+    }
+    return total;
+}
+
+// How many runs one sample needs so that its timed total is at least
+// min_ns, estimated from the warm-up run. Capped so tiny runs cannot
+// produce absurd repeat counts.
+static int inner_repeats(std::int64_t warmup_ns, std::int64_t min_ns) {
+    if (warmup_ns >= min_ns) return 1;
+    const std::int64_t per_run = warmup_ns > 0 ? warmup_ns : 1;
+    const std::int64_t k = (min_ns + per_run - 1) / per_run;  // ceiling division
+    return static_cast<int>(std::min<std::int64_t>(k, 100000));
+}
+
 // ---------------------------------------------------------------- main
 
 struct Options {
@@ -163,6 +202,9 @@ struct Options {
     int max_log = 20;
     int quadratic_max_log = 14;
     std::uint64_t seed = 12345;
+    int min_time_ms = 5;  // minimum timed duration of one sample
+    int cpu = -1;         // -1 = choose automatically (Windows) / don't pin (elsewhere)
+    bool pin = true;
 };
 
 static Options parse_args(int argc, char** argv) {
@@ -182,6 +224,9 @@ static Options parse_args(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--max-log")) o.max_log = std::atoi(next());
         else if (!std::strcmp(argv[i], "--quadratic-max-log")) o.quadratic_max_log = std::atoi(next());
         else if (!std::strcmp(argv[i], "--seed")) o.seed = std::strtoull(next(), nullptr, 10);
+        else if (!std::strcmp(argv[i], "--min-time-ms")) o.min_time_ms = std::atoi(next());
+        else if (!std::strcmp(argv[i], "--cpu")) o.cpu = std::atoi(next());
+        else if (!std::strcmp(argv[i], "--no-pin")) o.pin = false;
         else {
             std::fprintf(stderr, "unknown argument: %s\n", argv[i]);
             std::exit(2);
@@ -195,13 +240,30 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "WARNING: assertions enabled; build with -DCMAKE_BUILD_TYPE=Release for real numbers\n");
 #endif
     const Options opt = parse_args(argc, argv);
+    if (opt.min_time_ms < 0) {
+        std::fprintf(stderr, "--min-time-ms must be >= 0\n");
+        return 2;
+    }
+    const std::int64_t min_ns = std::int64_t{opt.min_time_ms} * 1000000;
+
+    if (opt.pin) {
+        const int cpu = opt.cpu >= 0 ? opt.cpu : bench::fastest_cpu();
+        if (cpu >= 0 && bench::pin_to_cpu(cpu)) {
+            std::fprintf(stderr, "pinned to CPU %d\n", cpu);
+        } else {
+            std::fprintf(stderr, "WARNING: not pinned to a CPU%s\n",
+                         cpu < 0 ? " (pass --cpu N to choose one)" : "");
+        }
+    }
 
     std::ofstream csv(opt.out);
     if (!csv) {
         std::fprintf(stderr, "cannot open %s\n", opt.out.c_str());
         return 1;
     }
-    csv << "workload,variant,n,ops,rep,ns_total,ns_per_op,checksum\n";
+    // ops = operations in ONE run; a sample is `inner` runs, so
+    // ns_per_op = ns_total / (inner * ops).
+    csv << "workload,variant,n,ops,rep,inner,ns_total,ns_per_op,checksum\n";
 
     std::ofstream counts;
     if (!opt.counts_out.empty()) {
@@ -228,12 +290,16 @@ int main(int argc, char** argv) {
                 using UF = typename decltype(tag)::type;
                 if (uf::may_be_quadratic<UF>() && lg > opt.quadratic_max_log) return;
 
+                // Warm-up: discarded, but used to choose `inner`.
+                const Measurement warm = run_once<UF>(n, ops);
+                const int inner = inner_repeats(warm.ns, min_ns);
+
                 for (int rep = 0; rep < opt.reps; ++rep) {
-                    const Measurement m = run_once<UF>(n, ops);
+                    const Measurement m = run_sample<UF>(n, ops, inner);
                     checksums[name] = m.checksum;
+                    const double per_op = static_cast<double>(m.ns) / (static_cast<double>(inner) * ops.size());
                     csv << wl.name << ',' << name << ',' << n << ',' << ops.size() << ',' << rep << ','
-                        << m.ns << ',' << static_cast<double>(m.ns) / ops.size() << ',' << m.checksum
-                        << '\n';
+                        << inner << ',' << m.ns << ',' << per_op << ',' << m.checksum << '\n';
                 }
 
                 // Untimed counting run. Its checksum joins the cross-check below
