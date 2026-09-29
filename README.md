@@ -4,7 +4,8 @@ Programming Assignment 1, Track A. The spec is in [`docs/assignment.md`](docs/as
 
 A header-only C++17 disjoint-set forest where the **linking rule** (naive / by rank / by size)
 and the **path rule** (none / full compression / halving) are chosen at compile time. There is also a
-**quick-find** baseline. A benchmark harness compares all 10 variants on generated workloads.
+**quick-find** baseline. The application is **maze generation by randomised Kruskal**. A benchmark
+harness compares all 10 variants on mazes and on synthetic workloads.
 
 ## Layout
 
@@ -13,10 +14,13 @@ and the **path rule** (none / full compression / halving) are chosen at compile 
 | `include/uf/union_find.hpp` | `UnionFind<Link, Path>`, the main data structure |
 | `include/uf/quick_find.hpp` | Quick-find baseline |
 | `include/uf/variants.hpp` | The list of variants that tests and benchmarks iterate over |
+| `include/uf/maze.hpp` | Maze generation by randomised Kruskal (`grid_walls`, `carve<UF>`) |
 | `tests/test_union_find.cpp` | Unit, randomised-oracle, and invariant tests |
+| `tests/test_maze.cpp` | Checks every variant carves a spanning tree, and all carve the same maze |
+| `tests/check.hpp` | The `CHECK` macro shared by the test programs |
 | `bench/bench_main.cpp` | Benchmark harness, writes CSV to `results/` |
-| `demo/demo_main.cpp` | Prints the parent array step by step, for learning and the video |
-| `scripts/plot.py` | Reads `results/*.csv`, writes `report/figures/*.png` |
+| `demo/demo_main.cpp` | Prints the parent array step by step, or draws a maze |
+| `scripts/plot.py` | Reads `results/bench*.csv`, writes `report/figures/*.png` |
 | `report/report.docx` | Written report (Word template) |
 | `PLAN.md` | Task plan and current status |
 | `journal.md`, `ai_log.md` | Learning journal and AI usage log |
@@ -47,17 +51,18 @@ Then add `-G Ninja` to the configure commands. If a configure has already failed
 folder and reconfigure: CMake caches the compiler path. MSVC ignores `-march=native`; its Release flags are `/O2`.
 If you use a multi-config generator (Visual Studio), add `--config Debug` to the build and ctest commands.
 
-
 ## Demo: watch the forest change
 
 ```powershell
 .\build-debug\demo.exe                                                  # built-in script: a chain, then finds
 .\build-debug\demo.exe u 0 1 u 2 3 u 0 2 u 4 5 u 6 7 u 4 6 u 0 4 f 7    # binomial tree: rank 3, depth 3
+.\build-debug\demo.exe maze 12 8 1                                      # draw a 12x8 maze, seed 1
 ```
 
-Prints the parent array (and rank or size) after every operation for six variants, on 8 elements.
-`u a b` is unite(a, b) and `f x` is find(x). Run it from the 64-bit developer shell: the Debug build
-needs the AddressSanitizer DLL, which is only on PATH there.
+The first two print the parent array (and rank or size) after every operation for six variants, on
+8 elements. `u a b` is unite(a, b) and `f x` is find(x). `maze [w h [seed]]` generates a maze with
+union by rank plus compression and draws it in ASCII. Run the Debug build from the 64-bit developer
+shell: it needs the AddressSanitizer DLL, which is only on PATH there.
 
 ## Benchmark (Release: `-O2 -march=native`)
 
@@ -71,6 +76,17 @@ python scripts/plot.py
 Options: `--counts-out results/counts.csv` (extra untimed run collecting path length and write counts), `--reps`, `--min-log`/`--max-log` (n goes from 2^min to 2^max), `--quadratic-max-log`
 (cap on n for quick-find and naive-no-compression, which can be quadratic), `--seed`.
 
+Workloads (`n` = number of elements, a power of two):
+
+| Workload | Operations |
+|---|---|
+| `maze` | Randomised Kruskal on a w x h grid (w*h = n): one unite per wall, in shuffled order |
+| `maze_scrambled` | The same maze with cells randomly relabelled, so neighbours are far apart in memory |
+| `random_mixed` | n random unions interleaved with n random connectivity queries |
+| `chain` | unite(i, i+1) for all i, then n queries from element 0 (worst case for naive linking) |
+
 Methodology notes:
 - Operation sequences and the union-find object are built before the timer starts. Only the operation loop is timed.
 - Each variant produces an order-sensitive checksum of its answers. If two variants disagree, the run aborts.
+- `std::shuffle` and the `<random>` distributions are implementation-defined, so a given `--seed`
+  produces the same operations on the same compiler, but not across MSVC, GCC and Clang.

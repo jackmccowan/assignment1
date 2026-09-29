@@ -3,18 +3,22 @@
 //
 // Usage: demo                        runs the built-in script
 //        demo u 0 1 u 1 2 f 0        your own script: "u a b" = unite(a, b), "f x" = find(x)
+//        demo maze [w h [seed]]      draws a maze made by randomised Kruskal (uf/maze.hpp)
 //
 // Reading the output: parent[i] == i means i is a root. depth(0) is the number
 // of hops from element 0 to its root. "rank"/"size" is only meaningful at
 // roots (size at a non-root is stale; it is never read again).
 // A "*" after unite means the two elements were already connected.
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <random>
 #include <vector>
 
+#include "uf/maze.hpp"
 #include "uf/union_find.hpp"
 
 using index_t = std::uint32_t;
@@ -65,6 +69,7 @@ static void run(const char* name, const std::vector<Step>& script) {
 
 [[noreturn]] static void usage() {
     std::fprintf(stderr, "usage: demo [u a b | f x]...   (elements are 0..%u)\n", kN - 1);
+    std::fprintf(stderr, "       demo maze [w h [seed]]\n");
     std::exit(2);
 }
 
@@ -93,7 +98,67 @@ static std::vector<Step> parse_script(int argc, char** argv) {
     return script;
 }
 
+// ---------------------------------------------------------------- maze mode
+
+// Draws the maze as ASCII. Each cell is "  "; a closed wall to the east is
+// "|" and to the south is "--". The entrance is the top of cell (0, 0) and
+// the exit is the bottom of cell (w-1, h-1).
+static void print_maze(std::size_t w, std::size_t h, const std::vector<uf::maze::Wall>& passages) {
+    // grid_walls always stores a wall as (a, b) with a < b, so b == a + 1
+    // means an east-west passage and b == a + w a north-south one.
+    std::vector<bool> open_east(w * h, false), open_south(w * h, false);
+    for (const uf::maze::Wall& p : passages) {
+        if (p.b == p.a + 1) open_east[p.a] = true;
+        else open_south[p.a] = true;
+    }
+
+    std::printf("+");
+    for (std::size_t x = 0; x < w; ++x) std::printf(x == 0 ? "  +" : "--+");  // entrance at (0, 0)
+    std::printf("\n");
+    for (std::size_t y = 0; y < h; ++y) {
+        std::printf("|");
+        for (std::size_t x = 0; x < w; ++x) std::printf(open_east[y * w + x] ? "   " : "  |");
+        std::printf("\n+");
+        for (std::size_t x = 0; x < w; ++x) {
+            const bool exit_here = (y == h - 1 && x == w - 1);
+            std::printf(open_south[y * w + x] || exit_here ? "  +" : "--+");
+        }
+        std::printf("\n");
+    }
+}
+
+static std::size_t parse_count(const char* s, std::size_t lo, std::size_t hi) {
+    char* end = nullptr;
+    const long v = std::strtol(s, &end, 10);
+    if (*end != '\0' || v < static_cast<long>(lo) || v > static_cast<long>(hi)) {
+        std::fprintf(stderr, "usage: demo maze [w h [seed]]   (1 <= w, h <= 40)\n");
+        std::exit(2);
+    }
+    return static_cast<std::size_t>(v);
+}
+
+static int run_maze(int argc, char** argv) {
+    // argv[1] is "maze"; optional w, h, seed follow.
+    const std::size_t w = argc > 2 ? parse_count(argv[2], 1, 40) : 12;
+    const std::size_t h = argc > 3 ? parse_count(argv[3], 1, 40) : 8;
+    const std::size_t seed = argc > 4 ? parse_count(argv[4], 0, 1000000) : 1;
+
+    std::vector<uf::maze::Wall> walls = uf::maze::grid_walls(w, h);
+    std::mt19937 rng(static_cast<std::uint32_t>(seed));
+    std::shuffle(walls.begin(), walls.end(), rng);
+
+    using UF = uf::UnionFind<uf::Link::ByRank, uf::Path::Compression>;
+    const std::vector<uf::maze::Wall> passages = uf::maze::carve<UF>(w, h, walls);
+
+    std::printf("%zux%zu maze, seed %zu: %zu of %zu walls removed (always w*h - 1 = %zu)\n\n", w, h,
+                seed, passages.size(), walls.size(), w * h - 1);
+    print_maze(w, h, passages);
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    if (argc > 1 && !std::strcmp(argv[1], "maze")) return run_maze(argc, argv);
+
     const std::vector<Step> script = argc > 1 ? parse_script(argc, argv) : kDefaultScript;
 
     using uf::Link;
