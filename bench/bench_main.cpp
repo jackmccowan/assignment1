@@ -15,6 +15,7 @@
 //              [--reps 5] [--min-log 10] [--max-log 20]
 //              [--quadratic-max-log 14] [--seed 12345]
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -22,11 +23,13 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <numeric>
 #include <random>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "uf/maze.hpp"
 #include "uf/variants.hpp"
 
 using index_t = std::uint32_t;
@@ -66,6 +69,45 @@ static std::vector<Op> make_chain(std::size_t n, std::mt19937_64& rng) {
     return ops;
 }
 
+// Maze generation by randomised Kruskal (see uf/maze.hpp) on a w x h grid
+// with w * h == n: one unite per interior wall, in shuffled order.
+// w and h are powers of two, so w * h is exactly n for n = 2^lg.
+//
+// With scramble == false, cell (x, y) is element y * w + x, so the two cells
+// of a wall are 1 or w apart in memory. With scramble == true, cells get a
+// random relabelling first: the maze and the sequence of unite results are
+// identical, but neighbouring cells are scattered across memory. Comparing
+// the two isolates the effect of memory locality.
+//
+// Unlike maze::carve there is no early exit: every wall is processed (plain
+// Kruskal over all edges). Walls examined after the maze is complete are
+// failed unites, which still cost two finds each.
+static std::vector<Op> make_maze_ops(std::size_t n, std::mt19937_64& rng, bool scramble) {
+    std::size_t w = 1;
+    while (w * w < n) w *= 2;  // w = 2^ceil(lg/2)
+    const std::size_t h = n / w;
+
+    std::vector<uf::maze::Wall> walls = uf::maze::grid_walls(w, h);
+    std::shuffle(walls.begin(), walls.end(), rng);
+
+    std::vector<index_t> label(n);
+    std::iota(label.begin(), label.end(), index_t{0});
+    if (scramble) std::shuffle(label.begin(), label.end(), rng);
+
+    std::vector<Op> ops;
+    ops.reserve(walls.size());
+    for (const uf::maze::Wall& wall : walls) ops.push_back({OpKind::Unite, label[wall.a], label[wall.b]});
+    return ops;
+}
+
+static std::vector<Op> make_maze(std::size_t n, std::mt19937_64& rng) {
+    return make_maze_ops(n, rng, false);
+}
+
+static std::vector<Op> make_maze_scrambled(std::size_t n, std::mt19937_64& rng) {
+    return make_maze_ops(n, rng, true);
+}
+
 struct Workload {
     const char* name;
     std::vector<Op> (*make)(std::size_t, std::mt19937_64&);
@@ -74,6 +116,8 @@ struct Workload {
 static const Workload kWorkloads[] = {
     {"random_mixed", make_random_mixed},
     {"chain", make_chain},
+    {"maze", make_maze},
+    {"maze_scrambled", make_maze_scrambled},
 };
 
 // ---------------------------------------------------------------- timing
