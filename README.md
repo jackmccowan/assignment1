@@ -15,6 +15,7 @@ and the **path rule** (none / full compression / halving) are chosen at compile 
 | `include/uf/variants.hpp` | The list of variants that tests and benchmarks iterate over |
 | `tests/test_union_find.cpp` | Unit, randomised-oracle, and invariant tests |
 | `bench/bench_main.cpp` | Benchmark harness, writes CSV to `results/` |
+| `demo/demo_main.cpp` | Prints the parent array step by step, for learning and the video |
 | `scripts/plot.py` | Reads `results/*.csv`, writes `report/figures/*.png` |
 | `report/report.docx` | Written report (Word template) |
 | `PLAN.md` | Task plan and current status |
@@ -45,6 +46,18 @@ GCC/Clang use ASan and UBSan. MSVC only supports ASan.
 Then add `-G Ninja` to the configure commands. If a configure has already failed, delete the build
 folder and reconfigure: CMake caches the compiler path. MSVC ignores `-march=native`; its Release flags are `/O2`.
 If you use a multi-config generator (Visual Studio), add `--config Debug` to the build and ctest commands.
+
+
+## Demo: watch the forest change
+
+```powershell
+.\build-debug\demo.exe                                                  # built-in script: a chain, then finds
+.\build-debug\demo.exe u 0 1 u 2 3 u 0 2 u 4 5 u 6 7 u 4 6 u 0 4 f 7    # binomial tree: rank 3, depth 3
+```
+
+Prints the parent array (and rank or size) after every operation for six variants, on 8 elements.
+`u a b` is unite(a, b) and `f x` is find(x). Run it from the 64-bit developer shell: the Debug build
+needs the AddressSanitizer DLL, which is only on PATH there.
 
 ## Benchmark (Release: `-O2 -march=native`)
 

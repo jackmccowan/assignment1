@@ -17,8 +17,17 @@ struct type_tag {
 
 template <class T>
 struct is_union_find : std::false_type {};
-template <Link L, Path P>
-struct is_union_find<UnionFind<L, P>> : std::true_type {};
+template <Link L, Path P, bool C>
+struct is_union_find<UnionFind<L, P, C>> : std::true_type {};
+
+// The instrumented version of a UnionFind type: same algorithm, with counters.
+// Deliberately undefined for QuickFind, which has no find path to count.
+template <class UF>
+struct counting_twin;
+template <Link L, Path P, bool C>
+struct counting_twin<UnionFind<L, P, C>> {
+    using type = UnionFind<L, P, true>;
+};
 
 // Calls f(type_tag<Impl>{}, "name") for every implementation.
 // Names are CSV-friendly: <link>_<path>.

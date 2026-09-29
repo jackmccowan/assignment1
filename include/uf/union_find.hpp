@@ -33,12 +33,23 @@ namespace uf {
 enum class Link { Naive, ByRank, BySize };
 enum class Path { None, Compression, Halving };
 
-template <Link L, Path P>
+// Operation counters, only collected when Counting == true.
+struct Stats {
+    std::uint64_t finds = 0;        // calls to find (unite and connected each make two)
+    std::uint64_t path_length = 0;  // sum over finds of depth(x) when the find started
+    std::uint64_t writes = 0;       // stores to parent_ made by find (not by linking)
+    std::uint64_t max_path = 0;     // largest single depth(x) seen at the start of a find
+};
+
+// Counting is a compile-time switch: with Counting == false every counter
+// update is removed by `if constexpr`, so timed builds contain no counter code.
+template <Link L, Path P, bool Counting = false>
 class UnionFind {
 public:
     using index_t = std::uint32_t;
     static constexpr Link link = L;
     static constexpr Path path = P;
+    static constexpr bool counting = Counting;
 
     // Every element starts as its own root. aux_ holds rank (ByRank, starts 0)
     // or size (BySize, starts 1). Naive linking does not need it, so we do not
@@ -55,31 +66,57 @@ public:
     // depth n (possible with naive linking) cannot overflow the call stack.
     index_t find(index_t x) {
         assert(x < parent_.size());
+        // Counters (Counting only): `levels` is the depth of the original x,
+        // i.e. the number of edges climbed from x to the root.
+        [[maybe_unused]] std::uint64_t levels = 0;
+        [[maybe_unused]] std::uint64_t writes = 0;
+        index_t root;
+
         if constexpr (P == Path::None) {
-            while (parent_[x] != x) x = parent_[x];
-            return x;
+            while (parent_[x] != x) {
+                x = parent_[x];
+                if constexpr (Counting) ++levels;
+            }
+            root = x;
         } else if constexpr (P == Path::Compression) {
             // Pass 1: locate the root.
-            index_t root = x;
-            while (parent_[root] != root) root = parent_[root];
+            root = x;
+            while (parent_[root] != root) {
+                root = parent_[root];
+                if constexpr (Counting) ++levels;
+            }
             // Pass 2: point every node on the path directly at the root.
             // Stops when x is the root or already a child of the root.
             while (parent_[x] != root) {
                 index_t next = parent_[x];
                 parent_[x] = root;
                 x = next;
+                if constexpr (Counting) ++writes;
             }
-            return root;
         } else {  // Path::Halving
             // Make every other node on the path point to its grandparent.
             // One pass, no second walk; the root is a fixed point
             // (parent_[root] == root), so this never moves a node off its tree.
             while (parent_[x] != x) {
+                if constexpr (Counting) {
+                    // Jumping to the grandparent climbs 2 levels, or 1 if the parent is the root.
+                    const index_t p = parent_[x];
+                    levels += (parent_[p] == p) ? 1 : 2;
+                    ++writes;
+                }
                 parent_[x] = parent_[parent_[x]];
                 x = parent_[x];
             }
-            return x;
+            root = x;
         }
+
+        if constexpr (Counting) {
+            ++stats_.finds;
+            stats_.path_length += levels;
+            stats_.writes += writes;
+            if (levels > stats_.max_path) stats_.max_path = levels;
+        }
+        return root;
     }
 
     // Merges the sets containing a and b. Returns false if they were already
@@ -134,10 +171,20 @@ public:
         return d;
     }
 
+    const Stats& stats() const {
+        static_assert(Counting, "stats() needs UnionFind<L, P, true>");
+        return stats_;
+    }
+    void reset_stats() {
+        static_assert(Counting, "reset_stats() needs UnionFind<L, P, true>");
+        stats_ = Stats{};
+    }
+
 private:
     std::vector<index_t> parent_;
     std::vector<index_t> aux_;
     std::size_t components_;
+    Stats stats_;  // unused (never touched) when Counting == false
 };
 
 }  // namespace uf

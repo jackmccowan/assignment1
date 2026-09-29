@@ -161,6 +161,60 @@ void test_long_chain() {
     CHECK(u.connected(0, static_cast<index_t>(n - 1)));
 }
 
+// Counters on a hand-checked case. Naive linking with unite(i, i+1) builds
+// the chain 0 -> 1 -> 2 -> 3 -> 4, so find(0) starts at depth 4.
+template <uf::Path P>
+void test_counters_on_chain() {
+    uf::UnionFind<uf::Link::Naive, P, true> u(5);
+    for (index_t i = 0; i < 4; ++i) u.unite(i, i + 1);
+    // Each unite(i, i+1) found two roots directly: 8 finds, no hops, no writes.
+    CHECK(u.stats().finds == 8);
+    CHECK(u.stats().path_length == 0);
+    CHECK(u.stats().writes == 0);
+
+    u.reset_stats();
+    CHECK(u.find(0) == 4);
+    CHECK(u.stats().finds == 1);
+    CHECK(u.stats().path_length == 4);
+    CHECK(u.stats().max_path == 4);
+
+    if constexpr (P == uf::Path::None) {
+        CHECK(u.stats().writes == 0);
+        CHECK(u.depth(0) == 4);  // tree unchanged
+    } else if constexpr (P == uf::Path::Compression) {
+        CHECK(u.stats().writes == 3);  // 0, 1, 2 repointed; 3 already points at the root
+        CHECK(u.depth(0) == 1);
+    } else {
+        CHECK(u.stats().writes == 2);  // 0 -> 2, then 2 -> 4
+        CHECK(u.depth(0) == 2);        // 0 -> 2 -> 4
+    }
+}
+
+// On random operations: each find must add exactly depth(x) (measured just
+// before it) to path_length, and the counting version must give the same
+// answers as the plain one, i.e. counting does not change the algorithm.
+template <class UF>
+void test_counters_match_depth(std::uint32_t seed) {
+    using Counted = typename uf::counting_twin<UF>::type;
+    const std::size_t n = 500;
+    std::mt19937 rng(seed);
+    std::uniform_int_distribution<index_t> pick(0, static_cast<index_t>(n - 1));
+    UF plain(n);
+    Counted counted(n);
+
+    for (int step = 0; step < 3000; ++step) {
+        const index_t a = pick(rng), b = pick(rng);
+        if (step % 3 == 0) {
+            CHECK(plain.unite(a, b) == counted.unite(a, b));
+        } else {
+            const std::size_t d = counted.depth(a);
+            const std::uint64_t before = counted.stats().path_length;
+            CHECK(plain.find(a) == counted.find(a));
+            CHECK(counted.stats().path_length - before == d);
+        }
+    }
+}
+
 int main() {
     uf::for_each_variant([](auto tag, const char* name) {
         using UF = typename decltype(tag)::type;
@@ -172,11 +226,17 @@ int main() {
         for (std::uint32_t seed = 1; seed <= 5; ++seed) test_random_against_oracle<UF>(seed);
         if constexpr (uf::is_union_find<UF>::value) {
             for (std::uint32_t seed = 1; seed <= 5; ++seed) test_invariants<UF>(seed);
+            for (std::uint32_t seed = 1; seed <= 3; ++seed) test_counters_match_depth<UF>(seed);
             test_long_chain<UF>();
         }
 
         std::printf("%-16s %s\n", name, g_failures == before ? "ok" : "FAILED");
     });
+
+    g_variant = "counters_on_chain";
+    test_counters_on_chain<uf::Path::None>();
+    test_counters_on_chain<uf::Path::Compression>();
+    test_counters_on_chain<uf::Path::Halving>();
 
     if (g_failures) {
         std::fprintf(stderr, "%d check(s) failed\n", g_failures);

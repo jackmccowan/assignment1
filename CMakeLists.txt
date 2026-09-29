@@ -31,5 +31,8 @@ target_link_libraries(tests PRIVATE uf)
 add_executable(bench bench/bench_main.cpp)
 target_link_libraries(bench PRIVATE uf)
 
+add_executable(demo demo/demo_main.cpp)
+target_link_libraries(demo PRIVATE uf)
+
 enable_testing()
 add_test(NAME union_find_tests COMMAND tests)

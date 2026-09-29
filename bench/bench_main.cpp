@@ -7,8 +7,12 @@
 //  * CSV output happens AFTER timing.
 //  * Every variant must produce the same checksum on the same ops; a mismatch
 //    means a correctness bug, and the harness aborts.
+//  * With --counts-out, each union-find variant is also run ONCE more, untimed,
+//    as its counting twin (UnionFind<L, P, true>), and the counters go to a
+//    separate CSV. Its checksum must match the timed run's.
 //
-// Usage: bench [--out results/bench.csv] [--reps 5] [--min-log 10] [--max-log 20]
+// Usage: bench [--out results/bench.csv] [--counts-out results/counts.csv]
+//              [--reps 5] [--min-log 10] [--max-log 20]
 //              [--quadratic-max-log 14] [--seed 12345]
 
 #include <chrono>
@@ -79,21 +83,29 @@ struct Measurement {
     std::uint64_t checksum;
 };
 
+// Applies every op in order. Shared by the timed and the counting runs, so
+// both execute exactly the same sequence of calls.
+// The checksum depends on every result in order, so the compiler cannot drop
+// the loop, and two variants only agree if (almost surely) every individual
+// answer agrees.
 template <class UF>
-static Measurement run_once(std::size_t n, const std::vector<Op>& ops) {
-    UF uf(n);  // constructed outside the timed region
+static std::uint64_t apply_ops(UF& uf, const std::vector<Op>& ops) {
     std::uint64_t checksum = 0;
-
-    const auto t0 = Clock::now();
     for (const Op& op : ops) {
         const bool r = (op.kind == OpKind::Unite) ? uf.unite(op.a, op.b) : uf.connected(op.a, op.b);
         checksum = checksum * 1000003u + r;  // order-sensitive, wraps mod 2^64
     }
+    return checksum;
+}
+
+template <class UF>
+static Measurement run_once(std::size_t n, const std::vector<Op>& ops) {
+    UF uf(n);  // constructed outside the timed region
+
+    const auto t0 = Clock::now();
+    const std::uint64_t checksum = apply_ops(uf, ops);
     const auto t1 = Clock::now();
 
-    // The checksum depends on every result in order, so the compiler cannot
-    // drop the loop, and two variants only agree if (almost surely) every
-    // individual answer agrees.
     return {std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count(), checksum};
 }
 
@@ -101,6 +113,7 @@ static Measurement run_once(std::size_t n, const std::vector<Op>& ops) {
 
 struct Options {
     std::string out = "results/bench.csv";
+    std::string counts_out;  // empty = don't collect counters
     int reps = 5;
     int min_log = 10;
     int max_log = 20;
@@ -119,6 +132,7 @@ static Options parse_args(int argc, char** argv) {
             return argv[++i];
         };
         if (!std::strcmp(argv[i], "--out")) o.out = next();
+        else if (!std::strcmp(argv[i], "--counts-out")) o.counts_out = next();
         else if (!std::strcmp(argv[i], "--reps")) o.reps = std::atoi(next());
         else if (!std::strcmp(argv[i], "--min-log")) o.min_log = std::atoi(next());
         else if (!std::strcmp(argv[i], "--max-log")) o.max_log = std::atoi(next());
@@ -145,6 +159,17 @@ int main(int argc, char** argv) {
     }
     csv << "workload,variant,n,ops,rep,ns_total,ns_per_op,checksum\n";
 
+    std::ofstream counts;
+    if (!opt.counts_out.empty()) {
+        counts.open(opt.counts_out);
+        if (!counts) {
+            std::fprintf(stderr, "cannot open %s\n", opt.counts_out.c_str());
+            return 1;
+        }
+        counts << "workload,variant,n,ops,finds,path_length,writes,max_path,"
+                  "path_per_find,writes_per_find,checksum\n";
+    }
+
     for (const Workload& wl : kWorkloads) {
         for (int lg = opt.min_log; lg <= opt.max_log; ++lg) {
             const std::size_t n = std::size_t{1} << lg;
@@ -166,6 +191,23 @@ int main(int argc, char** argv) {
                         << m.ns << ',' << static_cast<double>(m.ns) / ops.size() << ',' << m.checksum
                         << '\n';
                 }
+
+                // Untimed counting run. Its checksum joins the cross-check below
+                // under its own key, so a counting twin that behaves differently
+                // from the timed variant aborts the run.
+                if constexpr (uf::is_union_find<UF>::value) {
+                    if (counts.is_open()) {
+                        typename uf::counting_twin<UF>::type counted(n);
+                        const std::uint64_t checksum = apply_ops(counted, ops);
+                        checksums[std::string(name) + "(counting)"] = checksum;
+                        const uf::Stats& s = counted.stats();
+                        const double finds = s.finds ? static_cast<double>(s.finds) : 1.0;
+                        counts << wl.name << ',' << name << ',' << n << ',' << ops.size() << ','
+                               << s.finds << ',' << s.path_length << ',' << s.writes << ','
+                               << s.max_path << ',' << s.path_length / finds << ','
+                               << s.writes / finds << ',' << checksum << '\n';
+                    }
+                }
                 std::fprintf(stderr, "%-12s n=2^%-2d %-16s done\n", wl.name, lg, name);
             });
 
@@ -179,5 +221,6 @@ int main(int argc, char** argv) {
         }
     }
     std::fprintf(stderr, "wrote %s\n", opt.out.c_str());
+    if (counts.is_open()) std::fprintf(stderr, "wrote %s\n", opt.counts_out.c_str());
     return 0;
 }

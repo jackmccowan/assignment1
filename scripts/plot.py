@@ -1,4 +1,4 @@
-"""Plot benchmark results. Reads only results/*.csv; writes report/figures/*.png.
+"""Plot benchmark results. Reads results/bench*.csv; writes report/figures/*.png.
 
 One figure per workload: median ns/op vs n, log-log.
 Colour encodes the linking rule, line style + marker encode the path rule,
@@ -38,7 +38,7 @@ def style_for(variant: str):
 
 
 def main() -> None:
-    files = sorted(RESULTS.glob("*.csv"))
+    files = sorted(RESULTS.glob("bench*.csv"))  # timing CSVs only; counts*.csv have other columns
     if not files:
         raise SystemExit(f"no CSV files in {RESULTS}")
     df = pd.concat((pd.read_csv(f) for f in files), ignore_index=True)
