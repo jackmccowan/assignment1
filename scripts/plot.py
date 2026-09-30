@@ -14,6 +14,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
+from matplotlib.ticker import FuncFormatter
 
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "results"
@@ -95,6 +96,119 @@ def main() -> None:
         fig.savefig(out, dpi=150)
         plt.close(fig)
         print(f"wrote {out}")
+
+    plot_locality_ratio(stats)
+    plot_path_per_find()
+    plot_alpha_zoom(stats)
+
+
+# Where the parent + rank arrays (8 bytes per element) outgrow a cache level
+# on the test machine: 1.25 MB L2 per P-core, 24 MB shared L3.
+CACHE_LIMITS = {"L2 (1.25 MB)": 1.25 * 2**20 / 8, "L3 (24 MB)": 24 * 2**20 / 8}
+
+
+def mark_cache_limits(ax) -> None:
+    for label, n in CACHE_LIMITS.items():
+        ax.axvline(n, color="#6b6a64", linestyle=":", linewidth=1)
+        ax.text(n, 1.0, f" {label}", transform=ax.get_xaxis_transform(), fontsize=8,
+                color="#6b6a64", va="top")
+
+
+def finish(ax, fig, name: str) -> None:
+    ax.set_xscale("log", base=2)
+    ax.grid(True, which="major", color="#e0dfd8", linewidth=0.8)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    ax.legend(fontsize=8, frameon=False)
+    fig.tight_layout()
+    out = FIGURES / name
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    print(f"wrote {out}")
+
+
+def plot_locality_ratio(stats: pd.DataFrame) -> None:
+    """H3b: median ns/op of maze_scrambled divided by maze, same variant and n."""
+    m = stats[stats["workload"] == "maze"].set_index(["variant", "n"])["median"]
+    s = stats[stats["workload"] == "maze_scrambled"].set_index(["variant", "n"])["median"]
+    ratio = (s / m).dropna().reset_index(name="ratio")
+    if ratio.empty:
+        return
+    fig, ax = plt.subplots(figsize=(7.5, 4.8))
+    for variant in ["rank_compress", "size_compress", "rank_halve", "size_halve"]:
+        g = ratio[ratio["variant"] == variant].sort_values("n")
+        if g.empty:
+            continue
+        colour, ls, marker = style_for(variant)
+        ax.plot(g["n"], g["ratio"], color=colour, linestyle=ls, marker=marker, markersize=6,
+                linewidth=2, label=variant)
+    ax.axhline(1.0, color="#6b6a64", linewidth=1)
+    mark_cache_limits(ax)
+    ax.set_xlabel("n (elements)")
+    ax.set_ylabel("maze_scrambled / maze (median ns/op)")
+    ax.set_title("Same maze, scrambled memory layout")
+    finish(ax, fig, "maze_locality_ratio.png")
+
+
+def plot_alpha_zoom(stats: pd.DataFrame) -> None:
+    """H1 and H2: only the four alpha(n) variants, so their differences are visible.
+    One panel per workload with a shared y-axis; error bars are the IQR."""
+    variants = ["rank_compress", "size_compress", "rank_halve", "size_halve"]
+    workloads = [w for w in ("maze", "random_mixed") if w in set(stats["workload"])]
+    if not workloads:
+        return
+    fig, axes = plt.subplots(1, len(workloads), figsize=(11, 4.6), sharey=True, squeeze=False)
+    for ax, workload in zip(axes[0], workloads):
+        g = stats[(stats["workload"] == workload) & (stats["variant"].isin(variants))]
+        for variant in variants:
+            gv = g[g["variant"] == variant].sort_values("n")
+            colour, ls, marker = style_for(variant)
+            yerr = [gv["median"] - gv["q1"], gv["q3"] - gv["median"]]
+            ax.errorbar(gv["n"], gv["median"], yerr=yerr, color=colour, linestyle=ls, marker=marker,
+                        markersize=6, linewidth=2, elinewidth=1, capsize=3, label=variant)
+        ax.set_yscale("log")
+        # Plain numbers (2, 3, 4, 6, 10, 20 ...) instead of "6 x 10^1" on a narrow log axis.
+        plain = FuncFormatter(lambda v, _: f"{v:g}")
+        ax.yaxis.set_major_formatter(plain)
+        ax.yaxis.set_minor_formatter(plain)
+        mark_cache_limits(ax)
+        ax.set_xscale("log", base=2)
+        ax.set_xlabel("n (elements)")
+        ax.set_title(workload)
+        ax.grid(True, which="both", color="#e0dfd8", linewidth=0.6)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+    axes[0][0].set_ylabel("time per operation (ns)")
+    axes[0][0].legend(fontsize=8, frameon=False)
+    fig.suptitle("The four α(n) variants only (median; bars = IQR)")
+    fig.tight_layout()
+    out = FIGURES / "alpha_variants.png"
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    print(f"wrote {out}")
+
+
+def plot_path_per_find() -> None:
+    """H3a and H5: average path length per find, from the untimed counting run."""
+    files = sorted(RESULTS.glob("counts*.csv"))
+    if not files:
+        return
+    counts = pd.concat((pd.read_csv(f) for f in files), ignore_index=True)
+    for workload, g in counts.groupby("workload"):
+        fig, ax = plt.subplots(figsize=(7.5, 4.8))
+        for variant, gv in g.groupby("variant"):
+            gv = gv.sort_values("n")
+            colour, ls, marker = style_for(variant)
+            ax.plot(gv["n"], gv["path_per_find"], color=colour, linestyle=ls, marker=marker,
+                    markersize=6, linewidth=2, label=variant)
+        # Plain log scale: every value is > 0 (the smallest is about 0.5), and a
+        # symlog axis would draw values below 1 on a linear scale, which reads wrongly.
+        ax.set_yscale("log")
+        mark_cache_limits(ax)
+        ax.set_xlabel("n (elements)")
+        ax.set_ylabel("average path length per find")
+        ax.set_title(f"Work per find: {workload} (untimed counting run)")
+        finish(ax, fig, f"path_per_find_{workload}.png")
 
 
 if __name__ == "__main__":

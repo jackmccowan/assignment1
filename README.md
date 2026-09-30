@@ -19,16 +19,16 @@ harness compares all 10 variants on mazes and on synthetic workloads.
 | `tests/test_maze.cpp` | Checks every variant carves a spanning tree, and all carve the same maze |
 | `tests/check.hpp` | The `CHECK` macro shared by the test programs |
 | `bench/bench_main.cpp` | Benchmark harness, writes CSV to `results/` |
+| `bench/platform.hpp` | Pins the benchmark to a performance core (Windows) |
 | `demo/demo_main.cpp` | Prints the parent array step by step, or draws a maze |
-| `scripts/plot.py` | Reads `results/bench*.csv`, writes `report/figures/*.png` |
-| `report/report.docx` | Written report (Word template) |
-| `PLAN.md` | Task plan and current status |
-| `journal.md`, `ai_log.md` | Learning journal and AI usage log |
+| `scripts/plot.py` | Reads `results/bench*.csv` and `counts*.csv`, writes `report/figures/` |
+| `results/` | Output of the final benchmark run (`bench.csv`, `counts.csv`) |
+| `report/figures/` | Figures used in the report |
 
 ## Requirements
 
 - CMake 3.16 or later, and a C++17 compiler (GCC, Clang, or MSVC)
-- Python 3 with `pandas` and `matplotlib` (`pip install -r requirements.txt`)
+- Python 3 with `pandas` and `matplotlib` (`pip install pandas matplotlib`)
 
 ## Build and test (Debug, with sanitizers)
 
